@@ -1,5 +1,5 @@
 #!/vendor/bin/sh
-# Copyright (c) 2012-2018, 2020-2021 The Linux Foundation. All rights reserved.
+# Copyright (c) 2012-2018, 2020 The Linux Foundation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -42,16 +42,19 @@ soc_id=`cat /sys/devices/soc0/soc_id 2> /dev/null`
 esoc_name=`cat /sys/bus/esoc/devices/esoc0/esoc_name 2> /dev/null`
 
 target=`getprop ro.board.platform`
+product=`getprop ro.product.name`
+product=${product:(-4)}
+
+if [ -f /sys/class/android_usb/f_mass_storage/lun/nofua ]; then
+	echo 1  > /sys/class/android_usb/f_mass_storage/lun/nofua
+fi
 
 #
 # Override USB default composition
 #
 # If USB persist config not set, set default configuration
-
-debuggable=`getprop ro.debuggable`
-
-if [ "$(getprop persist.vendor.usb.config)" == "diag,serial_cdev,rmnet,dpl,qdss,adb" \
-	-o "$(getprop persist.vendor.usb.config)" == "" -a \
+dserial=`getprop ro.debuggable`
+if [ "$(getprop persist.vendor.usb.config)" == "" -a "$(getprop ro.build.type)" != "user" -a \
 	"$(getprop init.svc.vendor.usb-gadget-hal-1-0)" != "running" ]; then
     if [ "$esoc_name" != "" ]; then
 	  setprop persist.vendor.usb.config diag,diag_mdm,qdss,qdss_mdm,serial_cdev,dpl,rmnet,adb
@@ -68,24 +71,65 @@ if [ "$(getprop persist.vendor.usb.config)" == "diag,serial_cdev,rmnet,dpl,qdss,
                   *)
 		  case "$soc_machine" in
 		    "SA")
-	              setprop persist.vendor.usb.config diag,adb
+			if [ "$product" == "gvmq" ]; then
+				setprop persist.vendor.usb.config adb
+			else
+				setprop persist.vendor.usb.config diag,adb
+			fi
 		    ;;
 		    *)
 	            case "$target" in
-	              "bengal")
-			      case "$debuggable" in
-				  "1")
-					  setprop persist.vendor.usb.config adb
-					  ;;
-				  *)
-					  setprop persist.vendor.usb.config none
-					  ;;
-				  esac
+	              "msm8996")
+	                  setprop persist.vendor.usb.config diag,serial_cdev,serial_tty,rmnet_ipa,mass_storage,adb
+		      ;;
+	              "msm8909")
+			    if [ -d /config/usb_gadget ]; then
+				    setprop persist.vendor.usb.config diag,serial_cdev,rmnet,adb
+			    else
+				    setprop persist.vendor.usb.config diag,serial_smd,rmnet_qti_bam,adb
+			    fi
+		      ;;
+	              "msm8937")
+			    if [ -d /config/usb_gadget ]; then
+				       setprop persist.vendor.usb.config diag,serial_cdev,rmnet,dpl,adb
+			    else
+			               case "$soc_id" in
+				               "313" | "320")
+				                  setprop persist.vendor.usb.config diag,serial_smd,rmnet_ipa,adb
+				               ;;
+				               *)
+				                  setprop persist.vendor.usb.config diag,serial_smd,rmnet_qti_bam,adb
+				               ;;
+			               esac
+			    fi
+		      ;;
+	              "msm8953")
+			      if [ -d /config/usb_gadget ]; then
+				      setprop persist.vendor.usb.config diag,serial_cdev,rmnet,dpl,adb
+			      else
+				      setprop persist.vendor.usb.config diag,serial_smd,rmnet_ipa,adb
+			      fi
+		      ;;
+	              "msm8998" | "sdm660" | "apq8098_latv")
+		          setprop persist.vendor.usb.config diag,serial_cdev,rmnet,adb
+		      ;;
+	              "sdm845" | "sdm710")
+		          setprop persist.vendor.usb.config diag,serial_cdev,rmnet,dpl,adb
+		      ;;
+	              "msmnile" | "sm6150" | "trinket" | "lito" | "atoll" | "bengal" | "lahaina" | "holi")
+			  case "$dserial" in
+                                 "0")
+                                     setprop persist.vendor.usb.config none
+                                     ;;
+                                  *)
+                                     setprop persist.vendor.usb.config diag,serial_cdev,rmnet,dpl,qdss,adb
+                                     ;;
+                          esac
 		      ;;
 	              *)
 		          setprop persist.vendor.usb.config diag,adb
 		      ;;
-		     esac
+                    esac
 		    ;;
 		  esac
 	          ;;
@@ -104,11 +148,11 @@ fi
 # Start peripheral mode on primary USB controllers for Automotive platforms
 case "$soc_machine" in
     "SA")
-	if [ -f /sys/bus/platform/devices/4e00000.ssusb/mode ]; then
-	    default_mode=`cat /sys/bus/platform/devices/4e00000.ssusb/mode`
+	if [ -f /sys/bus/platform/devices/a600000.ssusb/mode ]; then
+	    default_mode=`cat /sys/bus/platform/devices/a600000.ssusb/mode`
 	    case "$default_mode" in
 		"none")
-		    echo peripheral > /sys/bus/platform/devices/4e00000.ssusb/mode
+		    echo peripheral > /sys/bus/platform/devices/a600000.ssusb/mode
 		;;
 	    esac
 	fi
@@ -119,11 +163,7 @@ esac
 if [ -d /config/usb_gadget ]; then
 	# Chip-serial is used for unique MSM identification in Product string
 	msm_serial=`cat /sys/devices/soc0/serial_number`;
-	# If MSM serial number is not available, then keep it blank instead of 0x00000000
-	if [ "$msm_serial" != "" ]; then
-		msm_serial_hex=`printf %08X $msm_serial`
-	fi
-
+	msm_serial_hex=`printf %08X $msm_serial`
 	machine_type=`cat /sys/devices/soc0/machine`
 	setprop vendor.usb.product_string "$machine_type-$soc_hwplatform _SN:$msm_serial_hex"
 
@@ -151,6 +191,14 @@ diag_extra=`getprop persist.vendor.usb.config.extra`
 if [ "$diag_extra" == "" ]; then
 	setprop persist.vendor.usb.config.extra none
 fi
+
+# enable rps cpus on msm8937 target
+setprop vendor.usb.rps_mask 0
+case "$soc_id" in
+	"294" | "295" | "353" | "354")
+		setprop vendor.usb.rps_mask 40
+	;;
+esac
 
 #
 # Initialize UVC conifguration.
